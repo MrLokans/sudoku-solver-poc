@@ -1,0 +1,55 @@
+FROM python:3.11 AS rye
+
+# Prevents Python from writing pyc files.
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Keeps Python from buffering stdout and stderr to avoid situations where
+# the application crashes without emitting any logs due to buffering.
+ENV PYTHONUNBUFFERED=1
+
+ENV PYTHONPATH="/app/src:$PYTHONPATH"
+
+# The virtual environment is created in the working directory where rye is run
+# so the development and production environments must be in the same directory respectively.
+WORKDIR /app
+
+RUN \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    --mount=type=cache,target=/var/cache/apt/archives \
+    apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    # Required for OpenCV \
+    libgl1
+
+ENV RYE_HOME="/opt/rye"
+ENV PATH="$RYE_HOME/shims:$PATH"
+
+# RYE_INSTALL_OPTION is required to build.
+# See: https://github.com/mitsuhiko/rye/issues/246
+# FIXME: why python 3.12 why why why my builds goes soooo sllooooow
+RUN curl -sSf https://rye-up.com/get | RYE_NO_AUTO_INSTALL=1 RYE_INSTALL_OPTION="--yes" bash
+
+# Download dependencies as a separate step to take advantage of Docker's caching.
+# Leverage a bind mount to some files to avoid having to copy them into
+# into this layer.
+RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=requirements.lock,target=requirements.lock \
+    --mount=type=bind,source=requirements-dev.lock,target=requirements-dev.lock \
+    --mount=type=bind,source=.python-version,target=.python-version \
+    --mount=type=bind,source=README.md,target=README.md \
+    rye sync --no-dev --no-lock
+
+COPY pyproject.toml .
+COPY bot.sh .
+COPY requirements.lock .
+COPY requirements-dev.lock .
+COPY .python-version .
+COPY README.md .
+COPY ./mnist-fit.keras /app/model.keras
+COPY src ./src
+
+ENV BOT_TOKEN=""
+ENV MODEL_PATH="/app/model.keras"
+
+# run bot.sh as entrypoint
+ENTRYPOINT ["./bot.sh"]
